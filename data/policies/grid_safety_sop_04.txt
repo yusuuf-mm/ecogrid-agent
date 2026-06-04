@@ -1,0 +1,17 @@
+GRID SAFETY STANDARD OPERATING PROCEDURE 04
+Effective: 2024-01-01
+Authority: Regional Grid Operations Authority
+
+Section 3.2 — Critical Infrastructure Reserve Requirements
+
+During any declared grid anomaly, emergency weather event, or peak stress period,
+all battery storage systems connected to the municipal distribution network must
+maintain a minimum State of Charge (SoC) reserve of 30% at all times for the
+duration of the event window.
+
+This reserve requirement applies specifically to facilities serving critical municipal
+infrastructure including but not limited to: hospitals, emergency services dispatch
+centers, water treatment facilities, and public transit control systems.
+
+Failure to maintain the minimum reserve during a declared anomaly constitutes a
+regulatory violation and may result in mandatory disconnection from the grid.

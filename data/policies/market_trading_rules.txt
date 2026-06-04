@@ -1,0 +1,19 @@
+BATTERY STORAGE MARKET PARTICIPATION RULES
+Version 2.3 — Wholesale Energy Trading
+
+Section 7 — Physical Operating Limits
+
+7.1 Maximum Discharge Rate
+No battery storage asset may discharge to the grid at a rate exceeding 250 kW per
+hour. This limit exists to prevent transformer overheating at distribution substations
+and applies regardless of real-time pricing signals.
+
+7.2 Maximum Charge Rate
+Charging from the grid is similarly capped at 250 kW per hour under standard
+operating conditions. This cap may be temporarily lifted to 300 kW during periods
+of significant renewable curtailment with explicit operator approval.
+
+7.3 Simultaneous Charge and Discharge
+Assets must not simultaneously charge and discharge. Any control system that
+produces simultaneous charge and discharge commands will be flagged as a
+configuration error and the asset will be placed in standby mode pending inspection.

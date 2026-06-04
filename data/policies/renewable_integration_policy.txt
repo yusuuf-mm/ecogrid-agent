@@ -1,0 +1,15 @@
+RENEWABLE ENERGY INTEGRATION POLICY
+Storage Asset Guidelines — Solar Priority Protocol
+
+During periods of high solar generation (defined as irradiance > 600 W/m² sustained
+for 2+ hours), battery storage assets are required to prioritize absorption of
+curtailed solar energy over grid charging.
+
+Storage operators should configure their management systems to:
+- Accept solar generation first before drawing from the grid
+- Hold a minimum 20% SoC buffer during peak solar hours (10:00-16:00)
+  to ensure capacity exists for afternoon solar capture
+- Defer grid discharge to post-solar hours (18:00-22:00) when feasible
+
+These guidelines support the regional 2030 renewable integration targets and
+participation is required for assets enrolled in the renewable storage incentive program.
