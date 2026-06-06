@@ -23,12 +23,15 @@ os.environ.setdefault("OPENAI_API_KEY", "test-key-not-used")
 
 
 def test_tool_query_policies_returns_dict_with_float_buffer():
-    """When the RAG service is unavailable, the tool returns a fallback dict
+    """When the RAG service is unreachable, the tool returns a fallback dict
     whose `min_battery_buffer` is a float in [0.0, 1.0].
     """
     from services.agent.tools import tool_query_policies
 
-    with patch("services.rag.retriever.query_grid_policies", side_effect=NotImplementedError):
+    with patch(
+        "services.rag.retriever.PolicyRetriever.retrieve",
+        side_effect=ConnectionError("qdrant not running"),
+    ):
         result = tool_query_policies.invoke({"query": "hospital reserve"})
 
     assert isinstance(result, dict)
@@ -57,7 +60,8 @@ def test_tool_query_policies_uses_rag_output_when_available():
     )
 
     with patch(
-        "services.rag.retriever.query_grid_policies", return_value=rag_result,
+        "services.rag.retriever.PolicyRetriever.retrieve",
+        return_value=[rag_result],
     ):
         result = tool_query_policies.invoke({"query": "hospital reserve heatwave"})
 

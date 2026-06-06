@@ -8,28 +8,25 @@ These tools do no business logic. They transform inputs, call the
 underlying service function, and transform outputs back to a dict the
 LLM can read.
 
-Actual upstream interfaces used (verified against shared/contracts.py
-and the real service modules on feat/agent-core):
+Actual upstream interfaces used (verified against the real service
+modules on main):
 
-  services.rag.retriever.query_grid_policies(PolicyQuery) -> PolicyResult
+  services.rag.retriever.PolicyRetriever().retrieve(query, top_k=1) -> list[PolicyResult]
   services.ml.inference.predictor.forecast_solar_generation(WeatherFeatures) -> SolarForecast
   services.solver.engine.optimize_battery_schedule(SolverConstraints) -> SolverResult
 
-The RAG parser (`services.rag.parser.extract_buffer_constraint`) does not
-exist on this branch — the rag service ships PolicyResult.constraint_float
-pre-parsed, so no inline parser is needed.
+`PolicyResult.constraint_float` is already parsed by the retriever
+(using `services.rag.parser.extract_buffer_constraint`); the tool does
+not re-parse the text.
 """
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from langchain_core.tools import tool
 from loguru import logger
 
 from shared.contracts import (
-    PolicyQuery,
-    PolicyResult,
     SolarForecast,
     SolverConstraints,
     SolverObjective,
@@ -47,30 +44,6 @@ _FALLBACK_POLICY_TEXT: str = (
 )
 
 
-def _extract_buffer_from_text(text: str) -> float | None:
-    """Last-resort inline parser for safety-buffer mentions in policy text.
-
-    Used only if `PolicyResult.constraint_float` is missing or out of range.
-    Matches patterns like "30%", "0.30", "30 percent", "minimum reserve 0.40".
-    Returns the first plausible fraction in [0.0, 1.0], or None.
-    """
-    if not text:
-        return None
-    candidates: list[float] = []
-
-    for pct in re.finditer(r"(\d+(?:\.\d+)?)\s*(?:%|percent)", text, re.IGNORECASE):
-        value = float(pct.group(1)) / 100.0
-        if 0.0 <= value <= 1.0:
-            candidates.append(value)
-
-    for frac in re.finditer(r"(?:^|[\s=:])(0?\.\d+|1\.0+|0|1)(?![0-9.])", text):
-        value = float(frac.group(1))
-        if 0.0 <= value <= 1.0:
-            candidates.append(value)
-
-    return candidates[0] if candidates else None
-
-
 @tool
 def tool_query_policies(query: str) -> dict[str, Any]:
     """Retrieve the regulatory safety-buffer constraint that applies to the
@@ -78,33 +51,45 @@ def tool_query_policies(query: str) -> dict[str, Any]:
 
     Use this FIRST. The `query` argument should be a short phrase describing
     the operational context — for example "hospital reserve during heatwave"
-    or "critical infrastructure minimum SoC". The retrieved document is parsed
-    for the safety-buffer fraction (a float in [0.0, 1.0]).
+    or "critical infrastructure minimum SoC". The retriever embeds the
+    query, finds the closest chunk in Qdrant, parses the safety-buffer
+    fraction, and returns a PolicyResult.
 
     Returns a dict with these keys:
         doc_id:               ID of the source policy document
         doc_title:            human-readable title of the source document
         policy_text:          raw text chunk retrieved from the vector DB
         min_battery_buffer:   parsed safety-buffer fraction, default 0.10
-        retrieval_score:      cosine similarity score from the vector DB
+        retrieval_score:      cosine similarity score from the vector DB (0.0 if not propagated)
         source:               "rag" if retrieved, "fallback" if RAG unavailable
     """
     logger.info("agent.tool.tool_query_policies query={!r}", query)
 
     try:
-        from services.rag.retriever import query_grid_policies
+        from services.rag.retriever import PolicyRetriever
 
-        result: PolicyResult = query_grid_policies(PolicyQuery(query_text=query, top_k=1))
+        results = PolicyRetriever().retrieve(query, top_k=1)
+        if not results:
+            logger.warning("agent.tool.tool_query_policies no_results query={!r}", query)
+            return {
+                "doc_id": _FALLBACK_DOC_ID,
+                "doc_title": _FALLBACK_DOC_TITLE,
+                "policy_text": _FALLBACK_POLICY_TEXT,
+                "min_battery_buffer": _FALLBACK_BUFFER,
+                "retrieval_score": 0.0,
+                "source": "fallback",
+                "reason": "no_results",
+            }
 
+        result = results[0]
         buffer = result.constraint_float
         if buffer is None or not (0.0 <= buffer <= 1.0):
-            inline = _extract_buffer_from_text(result.raw_chunk)
-            buffer = inline if inline is not None else _FALLBACK_BUFFER
             logger.warning(
-                "agent.tool.tool_query_policies buffer_out_of_range_or_none "
-                "doc_id={} constraint_float={} inline_extracted={} used={}",
-                result.doc_id, result.constraint_float, inline, buffer,
+                "agent.tool.tool_query_policies buffer_out_of_range "
+                "doc_id={} constraint_float={} using_default",
+                result.doc_id, result.constraint_float,
             )
+            buffer = _FALLBACK_BUFFER
 
         return {
             "doc_id": result.doc_id,
@@ -114,10 +99,9 @@ def tool_query_policies(query: str) -> dict[str, Any]:
             "retrieval_score": 0.0,
             "source": "rag",
         }
-    except NotImplementedError as exc:
+    except (ConnectionError, OSError) as exc:
         logger.warning(
-            "agent.tool.tool_query_policies rag_not_implemented error={} "
-            "using_fallback",
+            "agent.tool.tool_query_policies rag_unreachable error={} using_fallback",
             exc,
         )
         return {
@@ -127,6 +111,7 @@ def tool_query_policies(query: str) -> dict[str, Any]:
             "min_battery_buffer": _FALLBACK_BUFFER,
             "retrieval_score": 0.0,
             "source": "fallback",
+            "error": str(exc),
         }
     except Exception as exc:  # noqa: BLE001 — surface any RAG failure as structured fallback
         logger.error(
