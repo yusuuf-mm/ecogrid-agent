@@ -36,7 +36,7 @@ from typing import Optional
 from loguru import logger
 from ortools.linear_solver import pywraplp
 
-from contracts import (
+from shared.contracts import (
     ScheduleHour,
     SolverConstraints,
     SolverResult,

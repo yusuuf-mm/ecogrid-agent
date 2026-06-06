@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
-from contracts import SolverObjective
+from shared.contracts import SolverObjective
 
 
 ObjectiveName = Literal["MAXIMIZE_PROFIT", "MINIMIZE_CARBON", "MINIMIZE_COST"]
