@@ -1,0 +1,54 @@
+GRID SAFETY STANDARD OPERATING PROCEDURE 02
+Effective: 2024-06-01
+Authority: Regional Grid Operations Authority
+Document ID: grid_safety_sop_02
+Revision: 1.1
+
+Section 1 — Applicability and Trigger Conditions
+
+This Standard Operating Procedure is issued in response to seasonal thermal
+load conditions and is activated upon issuance of a Summer Heat Advisory by
+the Authority. Activation shall be communicated through standard operator
+notification channels and shall remain in force for the duration of the
+declared advisory period.
+
+Section 2 — Seasonal Risk Context
+
+2.1  Summer Heat Advisory periods are characterized by sustained ambient
+     temperatures in excess of 35 degrees Celsius for three (3) or more
+     consecutive hours, accompanied by elevated system-wide load factors.
+
+2.2  During such periods, the probability of unplanned transmission
+     constraint events increases materially and the Authority requires
+     elevated storage reserves to manage potential frequency deviations.
+
+Section 3 — Elevated Reserve Requirements
+
+3.1  During any active Summer Heat Advisory, every interconnected battery
+     energy storage system shall maintain a minimum state of charge buffer
+     of 20% of nameplate usable capacity at all hours of the operating
+     window.
+
+3.2  The reserve specified in Section 3.1 is additive to any standing
+     requirement of SOP 01 and shall supersede the Section 3.1 reserve of
+     SOP 01 for the duration of the advisory.
+
+3.3  Operators shall, where physically capable, pre-position storage assets
+     at or above the Section 3.1 floor prior to the start of the advisory
+     window.
+
+Section 4 — Coordination with Market Activities
+
+4.1  Charge scheduling under an active advisory shall prioritize system
+     stability over revenue optimization. Operators electing to discharge
+     to the grid during an advisory shall retain documentary evidence that
+     the discharge did not reduce SoC below the Section 3.1 floor.
+
+4.2  Repeated breaches of the Section 3.1 reserve during advisory periods
+     shall be referred to the Compliance Office for review.
+
+Section 5 — Deactivation
+
+This procedure deactivates automatically upon formal rescission of the
+underlying Summer Heat Advisory by the Authority. Upon deactivation, the
+reserve requirement reverts to that defined in SOP 01.

@@ -1,0 +1,62 @@
+GRID SAFETY STANDARD OPERATING PROCEDURE 03
+Effective: 2024-03-15
+Authority: Regional Grid Operations Authority
+Document ID: grid_safety_sop_03
+Revision: 2.0
+
+Section 1 — Scope and Purpose
+
+This Standard Operating Procedure establishes elevated State of Charge
+reserve requirements applicable to battery energy storage systems directly
+supporting facilities designated as Critical Infrastructure under the
+Regional Resilience Charter. The purpose of this procedure is to ensure
+uninterruptible energy availability for life-safety and public-welfare
+functions during grid stress events.
+
+Section 2 — Covered Facilities
+
+2.1  For the purposes of this procedure, Critical Infrastructure shall
+     include, without limitation:
+       (a) Acute care hospitals and trauma centers;
+       (b) Emergency services dispatch and 911 operations centers;
+       (c) Municipal water treatment and pumping stations;
+       (d) Public transit traction power substations;
+       (e) Designated emergency shelters operated by municipal authorities.
+
+2.2  Operators of storage assets that are electrically co-located with or
+     contracted to support a facility enumerated in Section 2.1 shall
+     comply with this procedure at all times regardless of the prevailing
+     operating mode of the wider grid.
+
+Section 3 — Hospital Reserve Requirements
+
+3.1  Storage assets subject to this procedure shall maintain a minimum
+     state of charge buffer of 30% of nameplate usable capacity at all
+     hours of the operating window.
+
+3.2  The reserve specified in Section 3.1 represents the floor sufficient
+     to maintain the connected critical load for a minimum of four (4)
+     consecutive hours at the facility's average demand profile.
+
+3.3  Where the connected facility is an acute care hospital, the reserve
+     shall not be reduced below the Section 3.1 floor under any
+     circumstance, including but not limited to the issuance of higher
+     revenue market signals, force majeure declarations, or operator
+     discretion.
+
+Section 4 — Verification and Audit
+
+4.1  Operators shall submit quarterly attestations confirming that each
+     covered asset has maintained the Section 3.1 reserve continuously
+     throughout the reporting period.
+
+4.2  The Authority may, at its discretion, audit any covered asset by
+     requesting sub-hourly telemetry for the immediately preceding thirty
+     (30) day period.
+
+Section 5 — Supersession
+
+This procedure supersedes the reserve requirements of SOP 01 and SOP 02
+for all assets within its scope. For assets outside the scope of Section
+2.1, the applicable procedure shall be determined by the prevailing grid
+state.

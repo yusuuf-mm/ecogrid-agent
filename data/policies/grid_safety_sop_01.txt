@@ -1,0 +1,56 @@
+GRID SAFETY STANDARD OPERATING PROCEDURE 01
+Effective: 2024-01-01
+Authority: Regional Grid Operations Authority
+Document ID: grid_safety_sop_01
+Revision: 4.2
+
+Section 1 — General Applicability
+
+This Standard Operating Procedure (SOP) governs the routine operating
+requirements for all battery energy storage systems (BESS) and distributed
+energy resources interconnected with the regional distribution network under
+normal grid conditions. The provisions herein apply whenever no advisory,
+anomaly, or critical infrastructure event has been declared by the Authority.
+
+Section 2 — Definitions
+
+2.1  "State of Charge (SoC)" means the ratio of energy currently stored in a
+     battery system to its nameplate usable capacity, expressed as a value
+     between 0.0 and 1.0 inclusive.
+
+2.2  "Minimum State of Charge Buffer" means the floor below which the SoC of
+     any interconnected storage asset shall not fall during the operating
+     window.
+
+2.3  "Operating Window" means the continuous 24-hour planning horizon
+     beginning at 00:00 local prevailing time.
+
+Section 3 — Operating Requirements
+
+3.1  Standard Operating Conditions. Under normal grid conditions, every
+     interconnected BESS shall maintain a minimum state of charge buffer of
+     10% of nameplate usable capacity at all hours of the operating window.
+
+3.2  Charge Coordination. Charging from the grid shall be scheduled during
+     hours of locational marginal price (LMP) below the rolling 24-hour mean
+     unless doing so would violate Section 3.1.
+
+3.3  Discharge Coordination. Discharge to the grid shall be permitted only
+     during hours of LMP above the rolling 24-hour mean, subject to the
+     Section 3.1 reserve constraint.
+
+Section 4 — Compliance and Reporting
+
+4.1  Operators shall retain hourly SoC telemetry for a period of not less
+     than ninety (90) days and shall produce such records upon request by
+     the Authority.
+
+4.2  Failure to maintain the minimum state of charge buffer defined in
+     Section 3.1 during standard operating conditions constitutes a
+     reportable deviation and shall be disclosed in the next regularly
+     scheduled compliance filing.
+
+Section 5 — Effective Period
+
+This procedure remains in force until rescinded, superseded, or modified
+by subsequent SOP issuance.

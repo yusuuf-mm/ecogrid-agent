@@ -1,0 +1,60 @@
+GRID SAFETY STANDARD OPERATING PROCEDURE 05
+Effective: 2024-09-01
+Authority: Regional Grid Operations Authority
+Document ID: grid_safety_sop_05
+Revision: 1.0
+
+Section 1 — Maintenance Window Context
+
+This Standard Operating Procedure governs the operating requirements for
+interconnected battery energy storage systems during a scheduled
+Maintenance Window declared by the Authority. A Maintenance Window is a
+planned period during which transmission, distribution, or generation
+assets are intentionally removed from service for inspection, testing,
+or capital improvement activities.
+
+Section 2 — Window Characteristics
+
+2.1  Maintenance Windows are pre-scheduled and shall be communicated to
+     affected operators not less than seventy-two (72) hours in advance
+     except in the case of emergency repair under Section 2.2.
+
+2.2  Emergency repair windows may be declared with shorter notice when
+     unplanned equipment failure creates immediate safety or reliability
+     risk; this procedure applies equally to planned and emergency
+     windows.
+
+Section 3 — Reduced Reserve Requirements
+
+3.1  During an active Maintenance Window, every interconnected battery
+     energy storage system shall maintain a minimum state of charge
+     buffer of 5% of nameplate usable capacity at all hours of the
+     operating window.
+
+3.2  The Section 3.1 reserve reflects the reduced contingency risk
+     associated with controlled, scheduled outages and is intended to
+     free storage capacity for revenue optimization and for arbitrage
+     against predictable intra-day price differentials created by the
+     maintenance activity itself.
+
+3.3  Operators shall not interpret the Section 3.1 reduction as
+     authorization to violate any binding interconnection agreement,
+     warranty condition, or asset-level safety limit. Where multiple
+     requirements conflict, the most conservative shall govern.
+
+Section 4 — Reapplication of Standard Procedures
+
+4.1  Upon conclusion of the Maintenance Window, the reserve requirement
+     reverts immediately to the appropriate standard procedure based
+     on the prevailing grid state.
+
+4.2  Operators shall report any event occurring within a Maintenance
+     Window that would, outside the window, have constituted a reportable
+     deviation, within twenty-four (24) hours of window conclusion.
+
+Section 5 — Coordination with Market Operator
+
+The Authority shall coordinate Maintenance Window scheduling with the
+applicable market operator to ensure that reserve reductions are
+reflected in real-time market dispatch instructions issued to covered
+assets.

@@ -1,17 +1,59 @@
 GRID SAFETY STANDARD OPERATING PROCEDURE 04
 Effective: 2024-01-01
 Authority: Regional Grid Operations Authority
+Document ID: grid_safety_sop_04
+Revision: 3.0
 
-Section 3.2 — Critical Infrastructure Reserve Requirements
+Section 1 — Declaration of Anomaly
 
-During any declared grid anomaly, emergency weather event, or peak stress period,
-all battery storage systems connected to the municipal distribution network must
-maintain a minimum State of Charge (SoC) reserve of 30% at all times for the
-duration of the event window.
+This Standard Operating Procedure is invoked upon formal declaration of a
+Grid Anomaly by the Authority. A Grid Anomaly is defined as a deviation
+from nominal operating parameters of the distribution network sufficient
+to materially elevate the risk of cascading failure, including but not
+limited to: forced transmission outages, generation shortfall events,
+frequency excursions exceeding defined limits, or cyber-physical
+incidents affecting grid control systems.
 
-This reserve requirement applies specifically to facilities serving critical municipal
-infrastructure including but not limited to: hospitals, emergency services dispatch
-centers, water treatment facilities, and public transit control systems.
+Section 2 — Anomaly Triggers
 
-Failure to maintain the minimum reserve during a declared anomaly constitutes a
-regulatory violation and may result in mandatory disconnection from the grid.
+2.1  Authority-declared Grid Anomalies shall be communicated through all
+     standard operator channels and shall specify the start time,
+     anticipated duration, and geographic scope of the anomaly window.
+
+2.2  Upon activation of this procedure, the reserve requirements of
+     SOP 01, SOP 02, and SOP 03 (where applicable) are superseded for
+     the duration of the anomaly window as set forth in Section 3.
+
+Section 3 — Emergency Reserve Requirements
+
+3.1  During any declared Grid Anomaly, every interconnected battery
+     energy storage system shall maintain a minimum state of charge
+     buffer of 35% of nameplate usable capacity at all hours of the
+     operating window for the duration of the anomaly.
+
+3.2  The Section 3.1 reserve is sized to enable coordinated black-start
+     support and to maintain frequency response capability for a minimum
+     of six (6) consecutive hours.
+
+3.3  Discharge to the grid during an active anomaly shall be permitted
+     only when explicitly directed by the Authority or when required to
+     prevent imminent breach of the Section 3.1 floor due to unplanned
+     load events.
+
+Section 4 — Operator Obligations
+
+4.1  Operators shall, upon notification of anomaly activation, freeze all
+     non-essential discharge schedules and shall re-position assets to
+     or above the Section 3.1 floor within sixty (60) minutes.
+
+4.2  Operators shall maintain continuous staffed monitoring of covered
+     assets throughout the anomaly window and shall report any breach
+     of the Section 3.1 floor to the Authority within fifteen (15)
+     minutes of occurrence.
+
+Section 5 — Deactivation
+
+This procedure deactivates upon formal rescission of the underlying
+anomaly declaration by the Authority. Upon deactivation, the reserve
+requirement reverts to the appropriate standard procedure based on the
+prevailing grid state.
