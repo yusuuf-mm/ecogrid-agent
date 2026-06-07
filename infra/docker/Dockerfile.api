@@ -1,0 +1,40 @@
+# infra/docker/Dockerfile.api
+#
+# Image for the FastAPI service.
+# Runs:  uvicorn services.api.main:app --host 0.0.0.0 --port 8000
+
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    POETRY_VERSION=2.4.1 \
+    POETRY_NO_INTERACTION=1 \
+    POETRY_VIRTUALENVS_CREATE=false
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir "poetry==${POETRY_VERSION}"
+
+COPY pyproject.toml poetry.lock ./
+
+RUN poetry install --only main --no-root
+
+COPY shared/ ./shared/
+COPY services/api/ ./services/api/
+COPY services/workers/ ./services/workers/
+COPY services/solver/ ./services/solver/
+COPY services/rag/ ./services/rag/
+COPY services/ml/ ./services/ml/
+COPY services/agent/ ./services/agent/
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -fsS http://localhost:8000/health || exit 1
+
+CMD ["uvicorn", "services.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

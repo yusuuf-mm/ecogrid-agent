@@ -1,0 +1,44 @@
+# infra/docker/Dockerfile.worker
+#
+# Image for the Celery worker that executes the optimization pipeline.
+# The worker invokes the LangChain agent, which in turn calls the solver,
+# ML, and RAG services. All of services/ is therefore copied in.
+#
+# Runs:  celery -A services.workers.celery_app worker --loglevel=info
+# (the Celery app object is named `app` in celery_app.py; -A <module>
+#  resolves it by name.)
+
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    POETRY_VERSION=2.4.1 \
+    POETRY_NO_INTERACTION=1 \
+    POETRY_VIRTUALENVS_CREATE=false \
+    PYTHONPATH=/app
+
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir "poetry==${POETRY_VERSION}"
+
+COPY pyproject.toml poetry.lock ./
+
+RUN poetry install --only main --no-root
+
+COPY shared/ ./shared/
+COPY services/ ./services/
+COPY scripts/ ./scripts/
+COPY data/models/ ./data/models/
+COPY data/policies/ ./data/policies/
+
+EXPOSE 8001
+
+HEALTHCHECK --interval=30s --timeout=10s --start_period=30s --retries=3 \
+    CMD celery -A services.workers.celery_app inspect ping -t 5 || exit 1
+
+CMD ["celery", "-A", "services.workers.celery_app", "worker", "--loglevel=info", "--concurrency=2"]

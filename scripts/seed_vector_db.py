@@ -2,7 +2,6 @@
 scripts/seed_vector_db.py
 
 Idempotent seeding of the grid policy documents into Qdrant.
-
 Usage:
     python scripts/seed_vector_db.py
 
@@ -10,7 +9,6 @@ Safe to run multiple times — point IDs are deterministic, so the second
 run replaces the same points with identical content.
 """
 from __future__ import annotations
-
 import sys
 from pathlib import Path
 

@@ -128,15 +128,43 @@ Branches merge into `main` via PR. Never merge feature branches into each other.
 ```bash
 git clone https://github.com/your-username/ecogrid-agent.git
 cd ecogrid-agent
-cp .env.example .env          # fill in your OpenAI API key + any overrides
-docker-compose up --build
+cp .env.example .env          # fill in OPENAI_API_KEY + OPENAI_API_BASE (gateway)
+docker compose up --build
 ```
 
-Seed the vector DB and database on first run:
+This brings up `postgres`, `redis`, `qdrant`, `api` (FastAPI on :8000),
+and `worker` (Celery). Each service has a healthcheck — the api exposes
+`GET /health` on port 8000.
+
+#### First-run seeding (Qdrant + Postgres)
+
+The data layer starts empty. The `ingest` service is opt-in via the
+`seed` profile so it does not run on every `up`:
 
 ```bash
-docker-compose exec api python scripts/seed_vector_db.py
-docker-compose exec api python scripts/seed_market_prices.py
+docker compose --profile seed run --rm ingest
+```
+
+That runs `scripts/seed_vector_db.py` then `scripts/seed_market_prices.py`
+in a one-shot container. Re-running it is safe — both scripts are
+idempotent (ON CONFLICT DO NOTHING on `market_prices`; Qdrant upserts
+overwrite by point id).
+
+#### Smoke test
+
+Once the stack is up and seeded:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/optimize \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Optimize battery for tomorrow. Hospital on site. Heatwave expected.",
+    "objective": "MAXIMIZE_PROFIT"
+  }'
+# → 202 Accepted, {"task_id": "<uuid>", "status": "QUEUED"}
+
+curl http://localhost:8000/api/v1/results/<task_id>
+# poll until status is SUCCESS or FAILURE
 ```
 
 ### Local development (without Docker)
@@ -145,8 +173,8 @@ docker-compose exec api python scripts/seed_market_prices.py
 poetry install
 poetry shell
 
-# Start dependencies (Redis + Qdrant + Postgres)
-docker-compose up redis qdrant postgres -d
+# Start dependencies (Redis + Qdrant + Postgres) only
+docker compose up postgres redis qdrant -d
 
 # Run API
 uvicorn services.api.main:app --reload --port 8000
@@ -154,6 +182,20 @@ uvicorn services.api.main:app --reload --port 8000
 # Run Celery worker (separate terminal)
 celery -A services.workers.celery_app worker --loglevel=info
 ```
+
+### OpenAI-compatible proxy gateway
+
+The worker and api both read `OPENAI_API_KEY` and `OPENAI_API_BASE` from
+the environment. To route LLM traffic through an OpenAI-compatible gateway
+(e.g. OpenGateway), set:
+
+```env
+OPENAI_API_KEY=<your-gateway-key>
+OPENAI_API_BASE=https://opengateway.example.com/v1
+```
+
+LangChain's `ChatOpenAI` honours `OPENAI_API_BASE` automatically — no
+code changes are needed.
 
 ---
 
