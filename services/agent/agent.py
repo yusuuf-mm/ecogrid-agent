@@ -53,6 +53,7 @@ def _build_agent() -> AgentExecutor:
         model=cfg.OPENAI_MODEL,
         temperature=cfg.AGENT_TEMPERATURE,
         api_key=cfg.OPENAI_API_KEY,
+        base_url=cfg.OPENAI_API_BASE or None,
     )
     tools = [tool_query_policies, tool_forecast_solar, tool_optimize_grid]
 
@@ -166,6 +167,7 @@ class GridOptimizationAgent:
             model=cfg.OPENAI_MODEL,
             temperature=cfg.AGENT_TEMPERATURE,
             api_key=cfg.OPENAI_API_KEY,
+        base_url=cfg.OPENAI_API_BASE or None,
         )
         self.tools = [tool_query_policies, tool_forecast_solar, tool_optimize_grid]
         self.executor = _build_agent()
