@@ -1,12 +1,7 @@
 """services/agent/tools.py
 
-Three LangChain tools, one per upstream service. The agent invokes these
-through natural language — the docstrings on each `@tool` function are
-what the LLM reads to decide which tool to call and with what arguments.
-
-These tools do no business logic. They transform inputs, call the
-underlying service function, and transform outputs back to a dict the
-LLM can read.
+Three plain functions wrapping upstream services. No LangChain dependency.
+The `GridOptimizationAgent` calls these directly in deterministic order.
 
 Actual upstream interfaces used (verified against the real service
 modules on main):
@@ -23,7 +18,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from langchain_core.tools import tool
 from loguru import logger
 
 from shared.contracts import (
@@ -44,7 +38,6 @@ _FALLBACK_POLICY_TEXT: str = (
 )
 
 
-@tool
 def tool_query_policies(query: str) -> dict[str, Any]:
     """Retrieve the regulatory safety-buffer constraint that applies to the
     described scenario from the policy vector database.
@@ -129,7 +122,6 @@ def tool_query_policies(query: str) -> dict[str, Any]:
         }
 
 
-@tool
 def tool_forecast_solar(date: str) -> dict[str, Any]:
     """Forecast 24 hours of solar generation (one kW value per hour) for the
     given target date.
@@ -182,7 +174,6 @@ def tool_forecast_solar(date: str) -> dict[str, Any]:
         raise
 
 
-@tool
 def tool_optimize_grid(solver_input: dict[str, Any]) -> dict[str, Any]:
     """Run the LP solver to produce an optimal 24-hour battery schedule.
 

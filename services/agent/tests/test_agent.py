@@ -11,14 +11,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# OPENAI_API_KEY must be set before any langchain/openai import resolves
-# settings. The agent module is lazy, so the env var only needs to be
-# present when GridOptimizationAgent is constructed in a test.
-os.environ.setdefault("OPENAI_API_KEY", "test-key-not-used")
+# GEMINI_API_KEY must be set before AgentSettings resolves.
+# The settings module is lazy; the env var only needs to be present
+# when GridOptimizationAgent is constructed in a test.
+os.environ.setdefault("GEMINI_API_KEY", "test-key-not-used")
 
 
 # ---------------------------------------------------------------------------
-# Tool tests — exercise the three @tool functions in isolation.
+# Tool tests — exercise the three tool functions in isolation.
+# Tools are plain functions now (not @tool-decorated LangChain tools).
 # ---------------------------------------------------------------------------
 
 
@@ -32,7 +33,7 @@ def test_tool_query_policies_returns_dict_with_float_buffer():
         "services.rag.retriever.PolicyRetriever.retrieve",
         side_effect=ConnectionError("qdrant not running"),
     ):
-        result = tool_query_policies.invoke({"query": "hospital reserve"})
+        result = tool_query_policies(query="hospital reserve")
 
     assert isinstance(result, dict)
     assert "min_battery_buffer" in result
@@ -63,7 +64,7 @@ def test_tool_query_policies_uses_rag_output_when_available():
         "services.rag.retriever.PolicyRetriever.retrieve",
         return_value=[rag_result],
     ):
-        result = tool_query_policies.invoke({"query": "hospital reserve heatwave"})
+        result = tool_query_policies(query="hospital reserve heatwave")
 
     assert result["doc_id"] == "grid_safety_sop_03"
     assert result["doc_title"] == "Grid Safety SOP 03"
@@ -82,7 +83,7 @@ def test_tool_forecast_solar_returns_dict_with_24_hour_forecast():
         "services.ml.inference.predictor.forecast_solar_generation",
         side_effect=NotImplementedError,
     ):
-        result = tool_forecast_solar.invoke({"date": "2026-07-15"})
+        result = tool_forecast_solar(date="2026-07-15")
 
     assert isinstance(result, dict)
     assert "hourly_forecast_kw" in result
@@ -122,7 +123,7 @@ def test_tool_optimize_grid_with_valid_input_returns_dict_with_status_key():
         "services.solver.engine.optimize_battery_schedule",
         return_value=MagicMock(model_dump=MagicMock(return_value=fake_solver_result)),
     ):
-        result = tool_optimize_grid.invoke({"solver_input": solver_input})
+        result = tool_optimize_grid(solver_input=solver_input)
 
     assert isinstance(result, dict)
     assert "status" in result
@@ -130,64 +131,93 @@ def test_tool_optimize_grid_with_valid_input_returns_dict_with_status_key():
 
 
 # ---------------------------------------------------------------------------
-# GridOptimizationAgent.run() — end-to-end with the LLM and tools mocked.
+# GridOptimizationAgent.run() — end-to-end with Gemini + tools mocked.
 # ---------------------------------------------------------------------------
 
 
-def _fake_executor_result(intermediate_steps: list) -> dict[str, Any]:
-    return {"output": "ok", "intermediate_steps": intermediate_steps}
+def _fake_genai_response(parsed: Any) -> MagicMock:
+    """Build a MagicMock that mimics google.genai's response object
+    with a populated `.parsed` attribute."""
+    resp = MagicMock()
+    resp.parsed = parsed
+    return resp
 
 
-def _make_agent_with_mock_executor(monkeypatch, intermediate_steps):
-    """Patch _build_agent so GridOptimizationAgent constructs without an LLM."""
+def _assert_tool_call_order(response, expected_tools: list[str]) -> None:
+    """Assert that audit.agent_tool_calls contains the expected tool names
+    in order."""
+    tools = [c["tool"] for c in response.audit.agent_tool_calls]
+    assert tools == expected_tools, f"Expected {expected_tools}, got {tools}"
+
+
+def _make_mock_genai_client(monkeypatch, intent_parsed, summary_parsed):
+    """Patch GridOptimizationAgent._generate_structured to return
+    pre-built _AgentIntent / _AgentSummary instances instead of
+    calling the real Gemini API."""
     from services.agent import agent as agent_module
 
-    fake_executor = MagicMock()
-    fake_executor.invoke.return_value = _fake_executor_result(intermediate_steps)
-    monkeypatch.setattr(agent_module, "_build_agent", lambda: fake_executor)
-    return fake_executor
+    original = agent_module.GridOptimizationAgent._generate_structured
+
+    def fake_generate_structured(self, schema, system_instruction, user_content):
+        if schema is agent_module._AgentIntent:
+            return intent_parsed
+        if schema is agent_module._AgentSummary:
+            return summary_parsed
+        return original(self, schema, system_instruction, user_content)
+
+    monkeypatch.setattr(
+        agent_module.GridOptimizationAgent,
+        "_generate_structured",
+        fake_generate_structured,
+    )
 
 
 def test_agent_run_returns_optimization_response_with_non_empty_audit_calls(monkeypatch):
     """agent.run() returns a fully-populated OptimizationResponse whose
-    audit.agent_tool_calls records every tool invocation.
+    audit.agent_tool_calls records every tool invocation in order.
     """
-    from langchain_core.agents import AgentAction
-
+    from services.agent import agent as agent_module
     from services.agent.agent import GridOptimizationAgent
     from shared.contracts import OptimizationResponse
 
-    action_policies = AgentAction(
-        tool="tool_query_policies",
-        tool_input={"query": "hospital reserve heatwave"},
-        log="",
+    # Mock Gemini structured calls
+    intent = agent_module._AgentIntent(
+        policy_query="hospital reserve heatwave",
+        target_date="2026-07-15",
     )
-    action_solar = AgentAction(
-        tool="tool_forecast_solar",
-        tool_input={"date": "2026-07-15"},
-        log="",
+    summary = agent_module._AgentSummary(
+        summary="Schedule produced under policy Grid Safety SOP 03 with a 30% SoC reserve enforced.",
+        tool_call_count=3,
     )
-    action_solve = AgentAction(
-        tool="tool_optimize_grid",
-        tool_input={"solver_input": {}},
-        log="",
-    )
-    intermediate = [
-        (action_policies, {
+    _make_mock_genai_client(monkeypatch, intent, summary)
+
+    # Mock the three tool functions to return plausible data
+    monkeypatch.setattr(
+        agent_module,
+        "tool_query_policies",
+        lambda query: {
             "doc_id": "grid_safety_sop_03",
             "doc_title": "Grid Safety SOP 03",
             "policy_text": "30% SoC reserve required.",
             "min_battery_buffer": 0.30,
             "retrieval_score": 0.95,
             "source": "rag",
-        }),
-        (action_solar, {
+        },
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "tool_forecast_solar",
+        lambda date: {
             "date": "2026-07-15",
             "hourly_forecast_kw": [0.0] * 24,
             "peak_kw": 0.0,
             "total_kwh": 0.0,
-        }),
-        (action_solve, {
+        },
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "tool_optimize_grid",
+        lambda solver_input: {
             "status": "OPTIMAL",
             "schedule": [
                 {
@@ -206,9 +236,8 @@ def test_agent_run_returns_optimization_response_with_non_empty_audit_calls(monk
             "safety_constraints_passed": True,
             "solver_time_ms": 2.5,
             "reason": None,
-        }),
-    ]
-    _make_agent_with_mock_executor(monkeypatch, intermediate)
+        },
+    )
 
     agent = GridOptimizationAgent()
     response = agent.run(
@@ -219,11 +248,11 @@ def test_agent_run_returns_optimization_response_with_non_empty_audit_calls(monk
 
     assert isinstance(response, OptimizationResponse)
     assert response.audit.agent_tool_calls, "audit.agent_tool_calls must be non-empty"
-    assert [c["tool"] for c in response.audit.agent_tool_calls] == [
+    _assert_tool_call_order(response, [
         "tool_query_policies",
         "tool_forecast_solar",
         "tool_optimize_grid",
-    ]
+    ])
     assert response.audit.policy_doc_retrieved == "grid_safety_sop_03"
     assert response.audit.constraint_injected == {"min_battery_buffer": 0.30}
     assert response.audit.solver_status == "OPTIMAL"
@@ -238,41 +267,55 @@ def test_agent_run_handles_infeasible_solver_result(monkeypatch):
     OptimizationResponse — no exception escapes. The summary is a non-empty
     plain-language explanation of why no schedule was possible.
     """
-    from langchain_core.agents import AgentAction
-
+    from services.agent import agent as agent_module
     from services.agent.agent import GridOptimizationAgent
     from shared.contracts import OptimizationResponse
 
-    intermediate = [
-        (
-            AgentAction(tool="tool_query_policies", tool_input={"query": "q"}, log=""),
-            {
-                "doc_id": "doc_42",
-                "doc_title": "Critical Infrastructure SOP",
-                "policy_text": "80% SoC reserve required.",
-                "min_battery_buffer": 0.80,
-                "retrieval_score": 0.9,
-                "source": "rag",
-            },
-        ),
-        (
-            AgentAction(tool="tool_forecast_solar", tool_input={"date": "2026-07-15"}, log=""),
-            {"date": "2026-07-15", "hourly_forecast_kw": [0.0] * 24, "peak_kw": 0.0, "total_kwh": 0.0},
-        ),
-        (
-            AgentAction(tool="tool_optimize_grid", tool_input={"solver_input": {}}, log=""),
-            {
-                "status": "INFEASIBLE",
-                "schedule": [],
-                "total_profit_usd": 0.0,
-                "carbon_saved_kg": 0.0,
-                "safety_constraints_passed": False,
-                "solver_time_ms": 1.0,
-                "reason": "Hospital buffer 0.80 exceeds feasible SoC range given initial charge 0.50.",
-            },
-        ),
-    ]
-    _make_agent_with_mock_executor(monkeypatch, intermediate)
+    intent = agent_module._AgentIntent(
+        policy_query="critical infrastructure high reserve",
+        target_date="2026-07-15",
+    )
+    summary = agent_module._AgentSummary(
+        summary="No feasible schedule: policy doc_42 requires an 80% SoC reserve that cannot be maintained given the forecast inputs.",
+        tool_call_count=3,
+    )
+    _make_mock_genai_client(monkeypatch, intent, summary)
+
+    monkeypatch.setattr(
+        agent_module,
+        "tool_query_policies",
+        lambda query: {
+            "doc_id": "doc_42",
+            "doc_title": "Critical Infrastructure SOP",
+            "policy_text": "80% SoC reserve required.",
+            "min_battery_buffer": 0.80,
+            "retrieval_score": 0.9,
+            "source": "rag",
+        },
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "tool_forecast_solar",
+        lambda date: {
+            "date": "2026-07-15",
+            "hourly_forecast_kw": [0.0] * 24,
+            "peak_kw": 0.0,
+            "total_kwh": 0.0,
+        },
+    )
+    monkeypatch.setattr(
+        agent_module,
+        "tool_optimize_grid",
+        lambda solver_input: {
+            "status": "INFEASIBLE",
+            "schedule": [],
+            "total_profit_usd": 0.0,
+            "carbon_saved_kg": 0.0,
+            "safety_constraints_passed": False,
+            "solver_time_ms": 1.0,
+            "reason": "Hospital buffer 0.80 exceeds feasible SoC range given initial charge 0.50.",
+        },
+    )
 
     agent = GridOptimizationAgent()
     response = agent.run(
