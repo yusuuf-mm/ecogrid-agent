@@ -61,7 +61,7 @@ def tool_query_policies(query: str) -> dict[str, Any]:
     try:
         from services.rag.retriever import PolicyRetriever
 
-        results = PolicyRetriever().retrieve(query, top_k=1)
+        results = PolicyRetriever().retrieve(query, top_k=5)
         if not results:
             logger.warning("agent.tool.tool_query_policies no_results query={!r}", query)
             return {
@@ -74,7 +74,9 @@ def tool_query_policies(query: str) -> dict[str, Any]:
                 "reason": "no_results",
             }
 
-        result = results[0]
+        # pick the chunk with the highest explicitly-parsed constraint
+        parsed = [r for r in results if r.parse_confidence == "parsed"]
+        result = max(parsed, key=lambda r: r.constraint_float) if parsed else results[0]
         buffer = result.constraint_float
         if buffer is None or not (0.0 <= buffer <= 1.0):
             logger.warning(
