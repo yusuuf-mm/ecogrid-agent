@@ -1,7 +1,7 @@
 """services/agent/agent.py
 
-LangChain orchestrator. Takes a natural language grid optimization
-request and drives the three tools in the required order:
+Gemini-native orchestrator. Takes a natural language grid optimization
+request and drives the three tools in deterministic order:
 
     1. tool_query_policies → safety buffer from policy doc
     2. tool_forecast_solar → 24-hour solar generation
@@ -10,8 +10,9 @@ request and drives the three tools in the required order:
 Returns a fully-populated `OptimizationResponse` (from shared.contracts)
 including the audit trail.
 
-The agent does no arithmetic. It reads language, decides tool order,
-extracts numbers from tool outputs, and synthesizes the final summary.
+Uses `google-genai` SDK natively with `response_schema` for structured
+output enforcement — no string parsing, no LangChain, no risk of NoneType
+splitting errors.
 """
 from __future__ import annotations
 
@@ -19,13 +20,13 @@ import time
 import uuid
 from typing import Any
 
-from langchain.agents import AgentExecutor, create_tool_calling_agent
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_openai import ChatOpenAI
+from google import genai
+from google.genai import types as genai_types
 from loguru import logger
+from pydantic import BaseModel, Field
 
 from services.agent.config import get_settings
-from services.agent.prompts import SYSTEM_PROMPT
+from services.agent.prompts import PARSE_INTENT_PROMPT, SYNTHESIZE_SUMMARY_PROMPT
 from services.agent.tools import (
     tool_forecast_solar,
     tool_optimize_grid,
@@ -47,31 +48,34 @@ _DEFAULT_INITIAL_SOC_KWH: float = 500.0
 _FALLBACK_PRICE_KWH: list[float] = [0.05] * 24
 
 
-def _build_agent() -> AgentExecutor:
-    cfg = get_settings()
-    llm = ChatOpenAI(
-        model=cfg.OPENAI_MODEL,
-        temperature=cfg.AGENT_TEMPERATURE,
-        api_key=cfg.OPENAI_API_KEY,
-        base_url=cfg.OPENAI_API_BASE or None,
-    )
-    tools = [tool_query_policies, tool_forecast_solar, tool_optimize_grid]
+# ---------------------------------------------------------------------------
+# response_schema models — guarantee structured I/O with the Gemini API.
+# No manual JSON parsing, no string-split risk, no NoneType propagation.
+# ---------------------------------------------------------------------------
 
-    prompt = ChatPromptTemplate.from_messages(
-        [
-            ("system", SYSTEM_PROMPT),
-            ("human", "{input}"),
-            MessagesPlaceholder(variable_name="agent_scratchpad"),
-        ]
+class _AgentIntent(BaseModel):
+    """Structured extraction of the user's natural-language request.
+    Gemini populates this via response_schema — guaranteed valid on receipt.
+    """
+    policy_query: str = Field(
+        description="Short operational-context phrase for policy retrieval, "
+        "e.g. 'hospital reserve during heatwave' or 'critical infrastructure default'"
+    )
+    target_date: str = Field(
+        description="ISO date string for the target day, e.g. '2025-07-15'"
     )
 
-    agent = create_tool_calling_agent(llm, tools, prompt)
-    return AgentExecutor(
-        agent=agent,
-        tools=tools,
-        max_iterations=cfg.AGENT_MAX_ITERATIONS,
-        return_intermediate_steps=True,
-        verbose=False,
+
+class _AgentSummary(BaseModel):
+    """Structured explanation summary produced by Gemini after all tools
+    have executed. Guaranteed to be a valid non-empty string.
+    """
+    summary: str = Field(
+        description="One-sentence plain-language summary a grid operator can read aloud"
+    )
+    tool_call_count: int = Field(
+        description="Number of tool invocations performed",
+        ge=1, le=10,
     )
 
 
@@ -159,18 +163,131 @@ def _summarize(
 
 
 class GridOptimizationAgent:
-    """End-to-end orchestrator. Public entry point is `run()`."""
+    """End-to-end orchestrator. Public entry point is `run()`.
+
+    Architecture:
+      Phase 1 — Gemini parses user intent via response_schema (_AgentIntent).
+      Phase 2 — Three tools execute deterministically in fixed order.
+      Phase 3 — Gemini synthesises the final summary via response_schema (_AgentSummary).
+      Final  — Python builds OptimizationResponse from structured data.
+
+    No LangChain. No string-parsed JSON. No NoneType split errors.
+    """
 
     def __init__(self) -> None:
         cfg = get_settings()
-        self.llm = ChatOpenAI(
-            model=cfg.OPENAI_MODEL,
-            temperature=cfg.AGENT_TEMPERATURE,
-            api_key=cfg.OPENAI_API_KEY,
-        base_url=cfg.OPENAI_API_BASE or None,
-        )
+        self.client = genai.Client(api_key=cfg.GEMINI_API_KEY)
+        self.model = cfg.GEMINI_MODEL
+        self.temperature = cfg.AGENT_TEMPERATURE
+        self.max_iterations = cfg.AGENT_MAX_ITERATIONS
         self.tools = [tool_query_policies, tool_forecast_solar, tool_optimize_grid]
-        self.executor = _build_agent()
+
+    # ------------------------------------------------------------------
+    # Internal: Gemini call with response_schema enforcement
+    # ------------------------------------------------------------------
+
+    def _generate_structured(
+        self,
+        schema: type[BaseModel],
+        system_instruction: str,
+        user_content: str,
+    ) -> BaseModel:
+        """Call Gemini with a Pydantic response_schema and return the
+        validated instance. Raises on API error; caller handles."""
+        response = self.client.models.generate_content(
+            model=self.model,
+            contents=user_content,
+            config=genai_types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                response_mime_type="application/json",
+                response_schema=schema,
+                temperature=self.temperature,
+            ),
+        )
+        if response.parsed is None:
+            raise RuntimeError(
+                f"Gemini returned None for response_schema={schema.__name__}: "
+                f"{response.text!r}"
+            )
+        return response.parsed
+
+    # ------------------------------------------------------------------
+    # Phase 1: Parse user intent
+    # ------------------------------------------------------------------
+
+    def _parse_intent(self, prompt: str, objective: str, date: str) -> _AgentIntent:
+        """Extract structured policy_query and target_date from the user's
+        natural language prompt using Gemini's response_schema."""
+        content = (
+            f"User request: {prompt}\n"
+            f"Objective: {objective}\n"
+            f"Provided date: {date}\n\n"
+            "Extract the policy query context and the target ISO date."
+        )
+        intent = self._generate_structured(
+            schema=_AgentIntent,
+            system_instruction=PARSE_INTENT_PROMPT,
+            user_content=content,
+        )
+        logger.debug("agent.run.intent policy_query={} target_date={}", intent.policy_query, intent.target_date)
+        return intent
+
+    # ------------------------------------------------------------------
+    # Phase 3: Synthesize final summary
+    # ------------------------------------------------------------------
+
+    def _synthesize_summary(
+        self,
+        solver_status: SolverStatus,
+        policy_doc_id: str | None,
+        buffer: float,
+        solver_reason: str | None,
+        num_tool_calls: int,
+    ) -> str:
+        """Use Gemini to produce a human-readable summary via response_schema."""
+        status_line = f"solver_status={solver_status.value}"
+        policy_line = f"policy={policy_doc_id or 'fallback'}, buffer={buffer * 100:.0f}%"
+        reason_line = f"reason={solver_reason}" if solver_reason else "no_errors"
+
+        content = (
+            f"{status_line}\n{policy_line}\n{reason_line}\n"
+            f"tool_calls={num_tool_calls}\n\n"
+            "Produce a one-sentence plain-language summary a grid operator can read aloud."
+        )
+        result = self._generate_structured(
+            schema=_AgentSummary,
+            system_instruction=SYNTHESIZE_SUMMARY_PROMPT,
+            user_content=content,
+        )
+        return result.summary
+
+    # ------------------------------------------------------------------
+    # Phase 2: Build solver input dict from tool outputs
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_solver_input(
+        policy_result: dict[str, Any],
+        solar_result: dict[str, Any],
+        objective: SolverObjective,
+    ) -> dict[str, Any]:
+        """Assemble the dict passed to tool_optimize_grid from the outputs
+        of the first two tools."""
+        return {
+            "solar_forecast_kw": solar_result.get("hourly_forecast_kw", [0.0] * 24),
+            "market_prices_kwh": _FALLBACK_PRICE_KWH,
+            "min_battery_buffer": float(policy_result.get("min_battery_buffer", 0.10)),
+            "battery_capacity_kwh": _DEFAULT_BATTERY_CAPACITY_KWH,
+            "max_charge_rate_kw": _DEFAULT_MAX_CHARGE_RATE_KW,
+            "initial_soc_kwh": _DEFAULT_INITIAL_SOC_KWH,
+            "objective": objective.value,
+            "policy_doc_id": policy_result.get("doc_id"),
+            "carbon_intensity_g_kwh": None,
+        }
+
+    # ------------------------------------------------------------------
+    # Public entry point
+    # ------------------------------------------------------------------
 
     def run(self, prompt: str, objective: str, date: str) -> OptimizationResponse:
         task_id = str(uuid.uuid4())
@@ -180,99 +297,139 @@ class GridOptimizationAgent:
         )
 
         objective_enum = _parse_objective(objective)
-        agent_input = (
-            f"{prompt}\n\n"
-            f"Objective: {objective_enum.value}\n"
-            f"Target date: {date}\n"
-            "Follow the three tool calls in the required order."
-        )
+        audit_calls: list[dict[str, Any]] = []
 
+        # ---- Phase 1: Parse user intent via response_schema ----------------
         try:
-            result = self.executor.invoke({"input": agent_input})
-        except Exception as exc:  # noqa: BLE001 — any agent failure becomes a structured response
+            intent = self._parse_intent(prompt, objective, date)
+        except Exception as exc:
             elapsed_ms = (time.perf_counter() - started) * 1000.0
-            logger.exception("agent.run.executor_failed task_id={}", task_id)
+            logger.exception("agent.run.intent_parse_failed task_id={}", task_id)
             return OptimizationResponse(
                 task_id=task_id,
                 status=TaskStatus.FAILURE,
-                error=f"Agent executor failed: {exc}",
+                error=f"Intent parsing failed: {exc}",
                 audit=AuditTrail(
-                    agent_tool_calls=[
-                        {
-                            "tool": "executor",
-                            "input": {"prompt": prompt, "objective": objective, "date": date},
-                            "output": None,
-                            "duration_ms": elapsed_ms,
-                            "error": str(exc),
-                        }
-                    ]
+                    agent_tool_calls=[{
+                        "tool": "gemini_intent_parser",
+                        "input": {"prompt": prompt, "objective": objective, "date": date},
+                        "output": None,
+                        "duration_ms": elapsed_ms,
+                        "error": str(exc),
+                    }],
                 ),
             )
 
-        intermediate = result.get("intermediate_steps", []) or []
-        audit_calls: list[dict[str, Any]] = []
-        for step in intermediate:
-            action, observation = step[0], step[1]
-            tool_name = getattr(action, "tool", getattr(action, "type", "unknown"))
-            tool_input = getattr(action, "tool_input", getattr(action, "input", None))
-            audit_calls.append(
-                {
-                    "tool": tool_name,
-                    "input": tool_input,
-                    "output": observation,
-                    "duration_ms": None,
-                }
+        # ---- Phase 2: Execute three tools deterministically ----------------
+
+        # Tool 1: Policy retrieval
+        t0 = time.perf_counter()
+        try:
+            policy_result = tool_query_policies(query=intent.policy_query)
+        except Exception as exc:
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            logger.exception("agent.run.policy_tool_failed task_id={}", task_id)
+            return OptimizationResponse(
+                task_id=task_id,
+                status=TaskStatus.FAILURE,
+                error=f"Policy tool failed: {exc}",
+                audit=AuditTrail(
+                    agent_tool_calls=[{
+                        "tool": "tool_query_policies",
+                        "input": {"query": intent.policy_query},
+                        "output": None,
+                        "duration_ms": (time.perf_counter() - t0) * 1000.0,
+                        "error": str(exc),
+                    }],
+                ),
             )
+        audit_calls.append({
+            "tool": "tool_query_policies",
+            "input": {"query": intent.policy_query},
+            "output": policy_result,
+            "duration_ms": (time.perf_counter() - t0) * 1000.0,
+        })
 
-        policy_doc_id: str | None = None
-        policy_text: str | None = None
-        constraint_injected: dict[str, Any] | None = None
-        solar_forecast_used: list[float] | None = None
-        market_prices_used: list[float] | None = None
-        solver_status: SolverStatus = SolverStatus.ERROR
-        solver_time_ms: float | None = None
-        solver_reason: str | None = None
-        safety_passed: bool = False
-        total_profit_usd: float = 0.0
-        carbon_saved_kg: float = 0.0
-        raw_schedule: list[ScheduleHour] = []
+        # Tool 2: Solar forecast
+        t1 = time.perf_counter()
+        try:
+            solar_result = tool_forecast_solar(date=intent.target_date)
+        except Exception as exc:
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            logger.exception("agent.run.solar_tool_failed task_id={}", task_id)
+            return OptimizationResponse(
+                task_id=task_id,
+                status=TaskStatus.FAILURE,
+                error=f"Solar forecast tool failed: {exc}",
+                audit=AuditTrail(
+                    agent_tool_calls=audit_calls + [{
+                        "tool": "tool_forecast_solar",
+                        "input": {"date": intent.target_date},
+                        "output": None,
+                        "duration_ms": (time.perf_counter() - t1) * 1000.0,
+                        "error": str(exc),
+                    }],
+                ),
+            )
+        audit_calls.append({
+            "tool": "tool_forecast_solar",
+            "input": {"date": intent.target_date},
+            "output": solar_result,
+            "duration_ms": (time.perf_counter() - t1) * 1000.0,
+        })
 
-        for call in audit_calls:
-            tool_name = call["tool"]
-            output = call["output"]
-            if tool_name == "tool_query_policies" and isinstance(output, dict):
-                policy_doc_id = output.get("doc_id")
-                policy_text = output.get("policy_text")
-                buf = output.get("min_battery_buffer")
-                if buf is not None:
-                    constraint_injected = {"min_battery_buffer": float(buf)}
-            elif tool_name == "tool_forecast_solar" and isinstance(output, dict):
-                solar_forecast_used = output.get("hourly_forecast_kw")
-            elif tool_name == "tool_optimize_grid" and isinstance(output, dict):
-                market_prices_used = (
-                    output.get("market_prices_used") or market_prices_used
-                )
-                try:
-                    solver_status = SolverStatus(output.get("status", "ERROR"))
-                except ValueError:
-                    solver_status = SolverStatus.ERROR
-                solver_time_ms = output.get("solver_time_ms")
-                solver_reason = output.get("reason")
-                safety_passed = bool(output.get("safety_constraints_passed", False))
-                total_profit_usd = float(output.get("total_profit_usd", 0.0))
-                carbon_saved_kg = float(output.get("carbon_saved_kg", 0.0))
-                raw_schedule = [
-                    ScheduleHour.model_validate(h) for h in (output.get("schedule") or [])
-                ]
+        # Tool 3: LP solver
+        solver_input = self._build_solver_input(policy_result, solar_result, objective_enum)
+        t2 = time.perf_counter()
+        try:
+            solver_result = tool_optimize_grid(solver_input=solver_input)
+        except Exception as exc:
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
+            logger.exception("agent.run.solver_tool_failed task_id={}", task_id)
+            return OptimizationResponse(
+                task_id=task_id,
+                status=TaskStatus.FAILURE,
+                error=f"Solver tool failed: {exc}",
+                audit=AuditTrail(
+                    agent_tool_calls=audit_calls + [{
+                        "tool": "tool_optimize_grid",
+                        "input": solver_input,
+                        "output": None,
+                        "duration_ms": (time.perf_counter() - t2) * 1000.0,
+                        "error": str(exc),
+                    }],
+                ),
+            )
+        audit_calls.append({
+            "tool": "tool_optimize_grid",
+            "input": solver_input,
+            "output": solver_result,
+            "duration_ms": (time.perf_counter() - t2) * 1000.0,
+        })
 
-        if market_prices_used is None:
-            market_prices_used = _FALLBACK_PRICE_KWH
+        # ---- Extract fields from structured solver output ------------------
 
-        buffer_float = (
-            float(constraint_injected["min_battery_buffer"])
-            if constraint_injected
-            else 0.10
-        )
+        policy_doc_id: str | None = policy_result.get("doc_id")
+        policy_text: str | None = policy_result.get("policy_text")
+        buffer_float: float = float(policy_result.get("min_battery_buffer", 0.10))
+        constraint_injected: dict[str, Any] | None = {"min_battery_buffer": buffer_float}
+
+        solar_forecast_used: list[float] | None = solar_result.get("hourly_forecast_kw")
+        market_prices_used: list[float] | None = solver_result.get("market_prices_used", _FALLBACK_PRICE_KWH)
+
+        raw_status: str = solver_result.get("status", "ERROR")
+        try:
+            solver_status = SolverStatus(raw_status)
+        except ValueError:
+            solver_status = SolverStatus.ERROR
+        solver_time_ms: float | None = solver_result.get("solver_time_ms")
+        solver_reason: str | None = solver_result.get("reason")
+        safety_passed: bool = bool(solver_result.get("safety_constraints_passed", False))
+        total_profit_usd: float = float(solver_result.get("total_profit_usd", 0.0))
+        carbon_saved_kg: float = float(solver_result.get("carbon_saved_kg", 0.0))
+        raw_schedule: list[ScheduleHour] = [
+            ScheduleHour.model_validate(h) for h in (solver_result.get("schedule") or [])
+        ]
 
         enriched_schedule = _build_hourly_reasons(
             schedule=raw_schedule,
@@ -287,7 +444,19 @@ class GridOptimizationAgent:
             if solver_status == SolverStatus.OPTIMAL
             else TaskStatus.FAILURE
         )
-        summary = _summarize(solver_status, solver_reason, policy_doc_id, buffer_float)
+
+        # ---- Phase 3: Gemini synthesises the summary via response_schema ----
+        try:
+            summary = self._synthesize_summary(
+                solver_status=solver_status,
+                policy_doc_id=policy_doc_id,
+                buffer=buffer_float,
+                solver_reason=solver_reason,
+                num_tool_calls=len(audit_calls),
+            )
+        except Exception:
+            logger.warning("agent.run.summary_synthesis_failed task_id={}, using fallback", task_id)
+            summary = _summarize(solver_status, solver_reason, policy_doc_id, buffer_float)
 
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         logger.info(
