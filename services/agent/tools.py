@@ -44,7 +44,7 @@ def tool_query_policies(query: str) -> dict[str, Any]:
 
     Use this FIRST. The `query` argument should be a short phrase describing
     the operational context — for example "hospital reserve during heatwave"
-    or "critical infrastructure minimum SoC". The retriever embeds the
+    or "minimum state of charge buffer hospital critical infrastructure". The retriever embeds the
     query, finds the closest chunk in Qdrant, parses the safety-buffer
     fraction, and returns a PolicyResult.
 
