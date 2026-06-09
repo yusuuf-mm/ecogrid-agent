@@ -38,7 +38,7 @@ COPY data/policies/ ./data/policies/
 
 EXPOSE 8001
 
-HEALTHCHECK --interval=30s --timeout=10s --start_period=30s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
     CMD celery -A services.workers.celery_app inspect ping -t 5 || exit 1
 
 CMD ["celery", "-A", "services.workers.celery_app", "worker", "--loglevel=info", "--concurrency=2"]

@@ -16,7 +16,9 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    QDRANT_URL: str = "http://localhost:6333"
+    # Default to the internal docker hostname so containers use the in-network service
+    # when an env var isn't provided. Override with RAG_QDRANT_URL in .env if needed.
+    QDRANT_URL: str = "http://qdrant:6333"
     QDRANT_COLLECTION: str = "grid_policies"
     EMBEDDING_MODEL: str = "BAAI/bge-small-en-v1.5"
     VECTOR_SIZE: int = 384

@@ -70,6 +70,8 @@ def _env(name: str, default: str | None = None) -> str:
 
 def _dsn() -> str:
     if url := os.environ.get("POSTGRES_URL"):
+        if url.startswith("postgresql+asyncpg://"):
+            return url.replace("postgresql+asyncpg://", "postgresql://", 1)
         return url
     host = _env("POSTGRES_HOST", "localhost")
     port = _env("POSTGRES_PORT", "5432")

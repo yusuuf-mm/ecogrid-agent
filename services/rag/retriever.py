@@ -44,9 +44,9 @@ class PolicyRetriever:
             ) from exc
 
         try:
-            raw_hits = self.client.search(
+            raw_hits = self.client.query_points(
                 collection_name=self.collection,
-                query_vector=vectors[0],
+                query=vectors[0],
                 limit=top_k,
                 with_payload=True,
             )
@@ -60,7 +60,7 @@ class PolicyRetriever:
             ) from exc
 
         results: list[PolicyChunk] = []
-        for hit in raw_hits:
+        for hit in raw_hits.points:
             payload = hit.payload or {}
             raw_text = str(payload.get("text", ""))
             parsed = extract_buffer_constraint(raw_text)
