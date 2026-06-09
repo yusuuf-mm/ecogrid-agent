@@ -1,67 +1,52 @@
 # EcoGrid-Agent
 
-An autonomous Virtual Power Plant (VPP) orchestrator. An LLM reasoning layer receives natural
-language grid optimization requests, retrieves regulatory constraints from a vector database,
-pulls a solar generation forecast from an ML model, then passes all parameters into a
-deterministic LP solver. The output is a mathematically verified, auditable charge/discharge
-schedule — not a suggestion.
+![Python 3.11](https://img.shields.io/badge/python-3.11-blue?logo=python)
+![Docker](https://img.shields.io/badge/docker-compose-2496ED?logo=docker)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-This is a portfolio project. The engineering thesis is simple: LLMs are good at language and
-reasoning. OR solvers are good at math and hard constraints. Connecting them properly, with
-clean interfaces and full audit trails, is the actual work.
+FastAPI → Celery → Gemini → [Qdrant, XGBoost, OR-Tools].  
+An autonomous VPP orchestrator: natural language in, mathematically optimal battery schedule out.
 
 ---
 
 ## What It Does
 
-Send a natural language request:
+Send a plain-English grid optimization request. The system retrieves the relevant regulatory policy from a vector database, forecasts tomorrow's solar generation with an XGBoost model, and runs a Google OR-Tools LP solver to produce a provably optimal 24-hour charge/discharge schedule. Every constraint in the solver is traced back to a policy document. Every decision is logged in the audit trail.
 
-```
-POST /api/v1/optimize
-{
-  "prompt": "Optimize battery ops for tomorrow. Heatwave expected afternoon. Hospital must have zero risk of power loss."
-}
-```
-
-The system returns a `task_id` immediately (202 Accepted). Poll for the result:
-
-```
-GET /api/v1/results/{task_id}
-```
-
-Result:
-
-```json
-{
-  "status": "OPTIMAL",
-  "summary": "Grid optimized for heatwave conditions. Enforced 30% hospital reserve per Policy doc_id_442.",
-  "schedule": [
-    { "hour": "02:00", "action": "CHARGE_FROM_GRID", "rate_kw": 200.0, "reason": "LMP at lowest ($0.04/kWh)" },
-    { "hour": "13:00", "action": "STORE_SOLAR",      "rate_kw": 250.0, "reason": "Peak solar 450kW" },
-    { "hour": "15:00", "action": "HOLD_RESERVE",     "rate_kw": 0.0,   "reason": "Heatwave peak. 30% buffer for hospital (doc_442)" },
-    { "hour": "18:00", "action": "DISCHARGE_TO_GRID","rate_kw": 230.5, "reason": "Peak grid demand. LMP at $0.24/kWh" }
-  ],
-  "metrics": {
-    "expected_revenue_usd": 1420.00,
-    "carbon_saved_kg": 340.5,
-    "safety_constraints_passed": true
-  },
-  "audit": {
-    "policy_doc_retrieved": "doc_id_442",
-    "policy_text": "Critical infrastructure must maintain minimum 30% SoC buffer during declared anomalies.",
-    "constraint_injected": { "min_battery_buffer": 0.30 },
-    "solver_status": "OPTIMAL",
-    "solver_time_ms": 42
-  }
-}
-```
-
-The agent doesn't guess. Every constraint it enforces links back to a document. Every schedule
-it produces is mathematically optimal given those constraints.
+No LLM guesses the schedule. No solver reads policy documents. The LLM handles language and reasoning; the solver handles math and hard guarantees. The bridge between them is the engineering artifact this project exists to demonstrate.
 
 ---
 
-## Architecture
+## Live Example
+
+```bash
+curl -X POST http://localhost:8000/api/v1/optimize \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "Optimize battery for tomorrow. Hospital on site. Heatwave expected.",
+    "objective": "MAXIMIZE_PROFIT"
+  }'
+```
+
+Response (poll `GET /api/v1/results/{task_id}` after receiving 202 Accepted):
+
+```json
+{
+  "status": "SUCCESS",
+  "summary": "The optimal schedule was found using policy grid_safety_sop_02 with a 20% safety buffer.",
+  "policy_retrieved": "grid_safety_sop_02",
+  "constraint_injected": {"min_battery_buffer": 0.2},
+  "solver_status": "OPTIMAL",
+  "safety_passed": true,
+  "profit_usd": 15.0,
+  "tool_calls": ["tool_query_policies", "tool_forecast_solar", "tool_optimize_grid"],
+  "schedule_hours": 24
+}
+```
+
+---
+
+## How It Works
 
 ```
 [ User Prompt ]
@@ -70,7 +55,7 @@ it produces is mathematically optimal given those constraints.
 [ FastAPI ] ──(enqueue task)──► [ Celery Worker ]
                                        │ (via Redis)
                                        ▼
-                             [ LangChain Agent ]
+                             [ Gemini Agent ]
                              calls three tools:
                              ├── tool_query_policies()   → Qdrant Vector DB
                              ├── tool_forecast_solar()   → XGBoost Model
@@ -81,8 +66,23 @@ it produces is mathematically optimal given those constraints.
                              stored in Redis, polled via API
 ```
 
-**Data flows one direction.** The agent calls tools. Tools don't call each other. The solver
-never touches the vector DB. The ML model doesn't know the solver exists.
+**Data flows one direction.** The agent calls tools. Tools don't call each other. The solver never touches the vector DB. The ML model doesn't know the solver exists.
+
+---
+
+## Key Engineering Decisions
+
+### LLM + LP Solver, not LLM alone
+
+An LLM cannot enforce a hard constraint. If you ask it to maintain a 30% SoC floor while maximizing profit, it may approximate — and approximation in energy infrastructure means blackouts. The LP solver (Google OR-Tools GLOP) enforces every constraint as a linear inequality. The LLM's job is limited to parsing the user's intent and the policy document's language. The solver owns the math.
+
+### Deterministic tool orchestration
+
+The three tools — policy retrieval, solar forecast, LP optimization — run in fixed order. There is no agent loop deciding which tool to call next. This makes the audit trail predictable: every response records exactly three tool calls with their inputs, outputs, and durations. If a tool fails, the response captures the error at the exact point of failure. No hidden state from a multi-step reasoning loop.
+
+### RAG-driven constraints
+
+The safety buffer is never hardcoded. The solver receives `min_battery_buffer` as a parameter, and that parameter comes from a policy document retrieved from Qdrant at runtime. Changing the buffer (10% → 30% for hospitals) requires updating a text file and re-seeding the vector DB — no code change, no deployment. This mirrors how real grid operators reference regulatory SOPs.
 
 ---
 
@@ -92,9 +92,9 @@ never touches the vector DB. The ML model doesn't know the solver exists.
 |---------------------|-------------------------------|-----------------------------------------------------|
 | Backend API         | FastAPI + Uvicorn             | Async, typed, production-grade Python API           |
 | Task Queue          | Celery + Redis                | LP solvers block; don't hold HTTP connections       |
-| AI Orchestration    | LangChain                     | Tool-use agent loop with structured outputs         |
+| AI Orchestration    | google-genai (gemini-2.5-flash) | Native structured outputs via response_schema     |
 | Vector DB           | Qdrant                        | Fast, lightweight, no external dependencies         |
-| Embeddings          | `all-MiniLM-L6-v2`           | Local inference, no API calls, fast                 |
+| Embeddings          | `BAAI/bge-small-en-v1.5`     | Local inference via fastembed, 384-dim, no GPU      |
 | ML Forecasting      | XGBoost + scikit-learn        | Interpretable, fast, handles tabular features well  |
 | OR Solver           | Google OR-Tools (GLOP/SCIP)  | Industry-standard LP/MIP solver                     |
 | Structured Data     | PostgreSQL                    | Market prices, operational state                    |
@@ -104,55 +104,28 @@ never touches the vector DB. The ML model doesn't know the solver exists.
 
 ---
 
-## Branch Structure
-
-Each branch owns one service. Shared types live in `shared/` and merge to `main` first.
-
-| Branch                       | Service Directory              | What It Builds                                    |
-|------------------------------|-------------------------------|---------------------------------------------------|
-| `feat/phase-1-or-solver`     | `services/solver/`            | LP/MIP engine, constraint model, solver contracts |
-| `feat/phase-1-backend-api`   | `services/api/` + `services/workers/` | FastAPI routes, Celery tasks           |
-| `feat/phase-2-ml-forecasting`| `services/ml/`                | XGBoost model, training pipeline, inference       |
-| `feat/phase-2-vector-rag`    | `services/rag/`               | Qdrant ingestion, RAG retrieval, param parsing    |
-| `feat/phase-3-agent-core`    | `services/agent/`             | LangChain agent, tool wrappers, audit logging     |
-| `feat/phase-4-docker-infra`  | `infra/`                      | Dockerfiles, docker-compose, scripts, CI          |
-
-Branches merge into `main` via PR. Never merge feature branches into each other.
-
----
-
 ## Running It
 
 ### Full stack (recommended)
 
 ```bash
-git clone https://github.com/your-username/ecogrid-agent.git
+git clone https://github.com/yusuuf-mm/ecogrid-agent.git
 cd ecogrid-agent
-cp .env.example .env          # fill in OPENAI_API_KEY + OPENAI_API_BASE (gateway)
+cp .env.example .env          # fill in GEMINI_API_KEY
 docker compose up --build
 ```
 
-This brings up `postgres`, `redis`, `qdrant`, `api` (FastAPI on :8000),
-and `worker` (Celery). Each service has a healthcheck — the api exposes
-`GET /health` on port 8000.
+This brings up `postgres`, `redis`, `qdrant`, `api` (FastAPI on :8000), and `worker` (Celery). Each service has a healthcheck.
 
-#### First-run seeding (Qdrant + Postgres)
-
-The data layer starts empty. The `ingest` service is opt-in via the
-`seed` profile so it does not run on every `up`:
+#### First-run seeding
 
 ```bash
 docker compose --profile seed run --rm ingest
 ```
 
-That runs `scripts/seed_vector_db.py` then `scripts/seed_market_prices.py`
-in a one-shot container. Re-running it is safe — both scripts are
-idempotent (ON CONFLICT DO NOTHING on `market_prices`; Qdrant upserts
-overwrite by point id).
+Runs `scripts/seed_vector_db.py` then `scripts/seed_market_prices.py` in a one-shot container. Idempotent — safe to re-run.
 
 #### Smoke test
-
-Once the stack is up and seeded:
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/optimize \
@@ -171,31 +144,10 @@ curl http://localhost:8000/api/v1/results/<task_id>
 
 ```bash
 poetry install
-poetry shell
-
-# Start dependencies (Redis + Qdrant + Postgres) only
 docker compose up postgres redis qdrant -d
-
-# Run API
-uvicorn services.api.main:app --reload --port 8000
-
-# Run Celery worker (separate terminal)
-celery -A services.workers.celery_app worker --loglevel=info
+uvicorn services.api.main:app --reload --port 8000       # terminal 1
+celery -A services.workers.celery_app worker --loglevel=info  # terminal 2
 ```
-
-### OpenAI-compatible proxy gateway
-
-The worker and api both read `OPENAI_API_KEY` and `OPENAI_API_BASE` from
-the environment. To route LLM traffic through an OpenAI-compatible gateway
-(e.g. OpenGateway), set:
-
-```env
-OPENAI_API_KEY=<your-gateway-key>
-OPENAI_API_BASE=https://opengateway.example.com/v1
-```
-
-LangChain's `ChatOpenAI` honours `OPENAI_API_BASE` automatically — no
-code changes are needed.
 
 ---
 
@@ -211,7 +163,7 @@ ecogrid-agent/
 │   ├── solver/               # Google OR-Tools LP engine
 │   ├── ml/                   # XGBoost solar forecast model
 │   ├── rag/                  # Qdrant + RAG retrieval pipeline
-│   └── agent/                # LangChain orchestrator + tools
+│   └── agent/                # Gemini orchestrator + tool wrappers
 ├── data/
 │   ├── raw/                  # Source data (NREL solar, ERCOT LMPs)
 │   ├── processed/            # Training-ready datasets
@@ -232,32 +184,13 @@ ecogrid-agent/
 
 ---
 
-## Data Sources
-
-All publicly available, no API keys required for data:
-
-- **Solar irradiance**: [NREL NSRDB](https://nsrdb.nrel.gov/) — historical hourly CSV downloads
-- **Market prices**: [ERCOT historical LMPs](https://www.ercot.com/mktinfo/prices) — hourly wholesale prices, free download
-- **Regulatory policies**: Fabricated SLA documents in `data/policies/` that mimic real FERC/NERC formatting
-
----
-
 ## What This Demonstrates
 
-**For deep-tech and AI-first companies**: The async pipeline (FastAPI → Celery → agent → tools)
-shows production instincts. The tool isolation pattern shows you know how to build systems that
-stay debuggable when they grow.
+**For deep-tech and AI-first companies**: The pipeline architecture (FastAPI → Celery → agent → tools) shows production engineering instincts. Tool isolation, typed contracts between every service, and a non-negotiable audit trail show a system designed to stay debuggable at scale. The Gemini `response_schema` pattern eliminates string-parsing risk in structured LLM output.
 
-**For energy and supply chain companies**: The LP solver with configurable objectives and
-constraint sourcing shows OR as a living skill, not a textbook memory.
+**For energy and supply chain companies**: The LP solver — fully parameterized, configurable objective (`MAXIMIZE_PROFIT` / `MINIMIZE_CARBON` / `MINIMIZE_COST`), INFEASIBLE as a first-class response — shows OR as a living skill, not a textbook exercise. The RAG pipeline turns regulatory documents into solver constraints without hardcoding.
 
-**For infrastructure and government contractors**: The RAG-to-constraint pipeline shows how
-regulatory documents can drive system behavior automatically — no manual re-coding when policy
-changes.
-
-The specific design decision that this project is built to demonstrate: **an LLM agent's job is
-reasoning and orchestration; a deterministic solver's job is math and hard guarantees**. They
-are not alternatives. They are complements. Building the bridge between them is the engineering.
+**For infrastructure and government contractors**: The RAG-to-constraint pipeline means policy changes don't require code changes. Update the text file, re-seed Qdrant, and the next optimization uses the new constraint automatically. The audit trail satisfies the traceability requirement that regulated environments mandate.
 
 ---
 
