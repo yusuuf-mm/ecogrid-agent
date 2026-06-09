@@ -4,7 +4,7 @@
 ![Docker](https://img.shields.io/badge/docker-compose-2496ED?logo=docker)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-FastAPI → Celery → Gemini → [Qdrant, XGBoost, OR-Tools].  
+FastAPI → Celery → Gemini SDK Orchestrator → [Qdrant, XGBoost, OR-Tools].  
 An autonomous VPP orchestrator: natural language in, mathematically optimal battery schedule out.
 
 ---
@@ -23,7 +23,7 @@ No LLM guesses the schedule. No solver reads policy documents. The LLM handles l
 curl -X POST http://localhost:8000/api/v1/optimize \
   -H "Content-Type: application/json" \
   -d '{
-    "prompt": "Optimize battery for tomorrow. Hospital on site. Heatwave expected.",
+    "prompt": "Optimize battery for tomorrow. Hospital on site. Heatwave expected afternoon.",
     "objective": "MAXIMIZE_PROFIT"
   }'
 ```
@@ -55,15 +55,15 @@ Response (poll `GET /api/v1/results/{task_id}` after receiving 202 Accepted):
 [ FastAPI ] ──(enqueue task)──► [ Celery Worker ]
                                        │ (via Redis)
                                        ▼
-                             [ Gemini Agent ]
-                             calls three tools:
+         [ Gemini SDK Orchestrator ]
+         deterministic tool sequence:
                              ├── tool_query_policies()   → Qdrant Vector DB
                              ├── tool_forecast_solar()   → XGBoost Model
                              └── tool_optimize_grid()    → Google OR-Tools LP
                                        │
                                        ▼
-                             [ Structured JSON Response ]
-                             stored in Redis, polled via API
+         [ Structured JSON Response ]
+         stored in Redis, polled via API
 ```
 
 **Data flows one direction.** The agent calls tools. Tools don't call each other. The solver never touches the vector DB. The ML model doesn't know the solver exists.
@@ -88,19 +88,32 @@ The safety buffer is never hardcoded. The solver receives `min_battery_buffer` a
 
 ## Tech Stack
 
-| Layer               | Technology                    | Reason                                              |
-|---------------------|-------------------------------|-----------------------------------------------------|
-| Backend API         | FastAPI + Uvicorn             | Async, typed, production-grade Python API           |
-| Task Queue          | Celery + Redis                | LP solvers block; don't hold HTTP connections       |
-| AI Orchestration    | google-genai (gemini-2.5-flash) | Native structured outputs via response_schema     |
-| Vector DB           | Qdrant                        | Fast, lightweight, no external dependencies         |
-| Embeddings          | `BAAI/bge-small-en-v1.5`     | Local inference via fastembed, 384-dim, no GPU      |
-| ML Forecasting      | XGBoost + scikit-learn        | Interpretable, fast, handles tabular features well  |
-| OR Solver           | Google OR-Tools (GLOP/SCIP)  | Industry-standard LP/MIP solver                     |
-| Structured Data     | PostgreSQL                    | Market prices, operational state                    |
-| Containerization    | Docker + docker-compose       | One command to run everything                       |
-| Package Management  | Poetry                        | Deterministic dependency resolution                 |
-| Language            | Python 3.11+                  | Best library coverage for all three domains         |
+| Layer               | Technology                          | Reason                                                     |
+|---------------------|-------------------------------------|------------------------------------------------------------|
+| Backend API         | FastAPI + Uvicorn                   | Async, typed, production-grade Python API                  |
+| Task Queue          | Celery + Redis                      | LP solvers block; don't hold HTTP connections              |
+| AI Orchestration    | Google Gemini SDK                   | Structured output via response_schema, deterministic tool orchestration, no agent loop |
+| Vector DB           | Qdrant                              | Fast, lightweight, no external dependencies                |
+| Embeddings          | fastembed (BAAI/bge-small-en-v1.5)  | No torch dependency, 50MB footprint, 384-dim vectors       |
+| ML Forecasting      | XGBoost + scikit-learn              | Interpretable, fast, handles tabular features well         |
+| OR Solver           | Google OR-Tools (GLOP/SCIP)         | Industry-standard LP/MIP solver                            |
+| Structured Data     | PostgreSQL                          | Market prices, operational state                           |
+| Containerization    | Docker + docker-compose             | One command to run everything                               |
+| Package Management  | Poetry                              | Deterministic dependency resolution                        |
+| Language            | Python 3.11+                        | Best library coverage for all three domains                |
+
+---
+
+## Branch Map
+
+| Branch | Ownership |
+|--------|-----------|
+| `feat/or-solver` | Solver core |
+| `feat/backend-api` | API and worker pipeline |
+| `feat/ml-forecasting` | Solar forecasting model |
+| `feat/vector-rag` | Retrieval and policy ingestion |
+| `feat/agent-core` | Gemini orchestration and tool wrappers |
+| `feat/docker-infra` | Docker and deployment scaffolding |
 
 ---
 
@@ -111,9 +124,11 @@ The safety buffer is never hardcoded. The solver receives `min_battery_buffer` a
 ```bash
 git clone https://github.com/yusuuf-mm/ecogrid-agent.git
 cd ecogrid-agent
-cp .env.example .env          # fill in GEMINI_API_KEY
+cp .env.example .env          # add GEMINI_API_KEY from aistudio.google.com
 docker compose up --build
 ```
+
+If you do not already have a key, get a free Gemini API key at [aistudio.google.com](https://aistudio.google.com/).
 
 This brings up `postgres`, `redis`, `qdrant`, `api` (FastAPI on :8000), and `worker` (Celery). Each service has a healthcheck.
 
@@ -148,6 +163,8 @@ docker compose up postgres redis qdrant -d
 uvicorn services.api.main:app --reload --port 8000       # terminal 1
 celery -A services.workers.celery_app worker --loglevel=info  # terminal 2
 ```
+
+Set `GEMINI_API_KEY` in your environment before starting the worker or API process.
 
 ---
 
