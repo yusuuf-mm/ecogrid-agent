@@ -20,6 +20,7 @@ from services.rag.embedder import embed_texts
 _MIN_CHUNK_CHARS = 30
 _MAX_CHUNK_TOKENS = 300
 _TOKEN_SPLIT = re.compile(r"\s+")
+_SECTION_HEADER_RE = re.compile(r"^(Section|SECTION|Article|ARTICLE|Part|PART|Chapter|CHAPTER)\b")
 _TXT_SUFFIX = ".txt"
 
 
@@ -46,21 +47,42 @@ def _split_long_paragraph(paragraph: str) -> list[str]:
     return chunks
 
 
+def _looks_like_section_header(paragraph: str) -> bool:
+    """Detect standalone section titles that should stay with the next paragraph."""
+    cleaned = paragraph.strip()
+    if not cleaned or "\n" in cleaned or len(cleaned) > 120:
+        return False
+    if cleaned.endswith((".", ":", ";", "?", "!")):
+        return False
+    return bool(_SECTION_HEADER_RE.match(cleaned) or cleaned.isupper())
+
+
 def chunk_document(text: str, doc_id: str, doc_title: str) -> list[dict]:
     """Split a policy document into retrieval chunks.
 
     Strategy:
       1. Split on blank lines (double newlines) to recover paragraphs.
-      2. Drop paragraphs shorter than _MIN_CHUNK_CHARS characters.
-      3. If a paragraph still exceeds _MAX_CHUNK_TOKENS, fall back to
+      2. Merge any paragraph shorter than 60 characters with the paragraph that
+         follows it.
+      3. Drop paragraphs shorter than _MIN_CHUNK_CHARS characters.
+      4. If a paragraph still exceeds _MAX_CHUNK_TOKENS, fall back to
          splitting on single newlines.
     """
     chunks: list[dict] = []
     chunk_idx = 0
-    for paragraph in text.split("\n\n"):
-        cleaned = paragraph.strip()
-        if not cleaned:
+    paragraphs = [paragraph.strip() for paragraph in text.split("\n\n") if paragraph.strip()]
+    merged_paragraphs: list[str] = []
+    paragraph_idx = 0
+    while paragraph_idx < len(paragraphs):
+        paragraph = paragraphs[paragraph_idx]
+        if len(paragraph) < 60 and paragraph_idx + 1 < len(paragraphs):
+            merged_paragraphs.append(f"{paragraph}\n\n{paragraphs[paragraph_idx + 1]}")
+            paragraph_idx += 2
             continue
+        merged_paragraphs.append(paragraph)
+        paragraph_idx += 1
+
+    for cleaned in merged_paragraphs:
         token_count = len(_TOKEN_SPLIT.split(cleaned))
         if token_count > _MAX_CHUNK_TOKENS:
             pieces = _split_long_paragraph(cleaned)
